@@ -311,6 +311,7 @@ __global__ void wmma_attention_long_rm_kernel(const half2 *qkv, const half2 *qkv
 #endif
 }
 
+// shared_memory_size :
 // __shared__ __half     s_kv  [max_seq_len][size_per_head + SKEW_HALF];
 // __shared__ __half  s_query[split_seq_len][size_per_head + SKEW_HALF];
 // __shared__ __half s_logits[split_seq_len][max_seq_len   + SKEW_HALF];
@@ -318,7 +319,7 @@ __global__ void wmma_attention_long_rm_kernel(const half2 *qkv, const half2 *qkv
 #define WMMA_ATTENTION_LONG(SEQ_LEN, SIZE_PER_HEAD, SPLIT_LEN)                                    \
   shared_memory_size =                                                                            \
       ((SEQ_LEN + SPLIT_LEN) * (SIZE_PER_HEAD + SKEW_HALF) + SPLIT_LEN * (SEQ_LEN + SKEW_HALF)) * \
-      2;                                                                                          \
+      2; /* 这个2应该是sizeof(half)*/                                                        \
   if (shared_memory_size > 48 * 1024)                                                             \
     cudaFuncSetAttribute(wmma_attention_long_kernel<SEQ_LEN, SIZE_PER_HEAD, SPLIT_LEN>,           \
                          cudaFuncAttributeMaxDynamicSharedMemorySize, 64 * 1024);                 \
@@ -361,56 +362,56 @@ void Attention<OpType>::fused_long_infer(AttentionInferParam infer_param) {
     const int split_count = (seq_len + 15) / 16;
     switch (split_count) {
       case 6:
-        WMMA_ATTENTION_LONG(96, 64, 48);
-        break;  //  80 < seq_len <=  96
+        WMMA_ATTENTION_LONG(96, 64, 48);  // grid.y = 2
+        break;                            //  80 < seq_len <=  96
       case 7:
-        WMMA_ATTENTION_LONG(112, 64, 64);
-        break;  //  96 < seq_len <= 112
+        WMMA_ATTENTION_LONG(112, 64, 64);  // grid.y = 2
+        break;                             //  96 < seq_len <= 112
       case 8:
-        WMMA_ATTENTION_LONG(128, 64, 64);
-        break;  // 112 < seq_len <= 128
+        WMMA_ATTENTION_LONG(128, 64, 64);  // grid.y = 2
+        break;                             // 112 < seq_len <= 128
       case 9:
-        WMMA_ATTENTION_LONG(144, 64, 48);
-        break;  // 128 < seq_len <= 144
+        WMMA_ATTENTION_LONG(144, 64, 48);  // grid.y = 3
+        break;                             // 128 < seq_len <= 144
       case 10:
-        WMMA_ATTENTION_LONG(160, 64, 48);
-        break;  // 144 < seq_len <= 160
+        WMMA_ATTENTION_LONG(160, 64, 48);  // grid.y = 4
+        break;                             // 144 < seq_len <= 160
       case 11:
-        WMMA_ATTENTION_LONG(176, 64, 32);
-        break;  // 160 < seq_len <= 176
+        WMMA_ATTENTION_LONG(176, 64, 32);  // grid.y = 6
+        break;                             // 160 < seq_len <= 176
       case 12:
-        WMMA_ATTENTION_LONG(192, 64, 32);
-        break;  // 176 < seq_len <= 192
+        WMMA_ATTENTION_LONG(192, 64, 32);  // grid.y = 6
+        break;                             // 176 < seq_len <= 192
       case 13:
-        WMMA_ATTENTION_LONG(208, 64, 32);
-        break;  // 192 < seq_len <= 208
+        WMMA_ATTENTION_LONG(208, 64, 32);  // grid.y = 7
+        break;                             // 192 < seq_len <= 208
       case 14:
-        WMMA_ATTENTION_LONG(224, 64, 32);
-        break;  // 208 < seq_len <= 224
+        WMMA_ATTENTION_LONG(224, 64, 32);  // grid.y = 7
+        break;                             // 208 < seq_len <= 224
       case 15:
-        WMMA_ATTENTION_LONG(240, 64, 32);
-        break;  // 224 < seq_len <= 240
+        WMMA_ATTENTION_LONG(240, 64, 32);  // grid.y = 8
+        break;                             // 224 < seq_len <= 240
       case 16:
-        WMMA_ATTENTION_LONG(256, 64, 32);
-        break;  // 240 < seq_len <= 256
+        WMMA_ATTENTION_LONG(256, 64, 32);  // grid.y = 8
+        break;                             // 240 < seq_len <= 256
       case 17:
-        WMMA_ATTENTION_LONG(272, 64, 16);
-        break;  // 256 < seq_len <= 272
+        WMMA_ATTENTION_LONG(272, 64, 16);  // grid.y = 17
+        break;                             // 256 < seq_len <= 272
       case 18:
-        WMMA_ATTENTION_LONG(288, 64, 16);
-        break;  // 272 < seq_len <= 288
+        WMMA_ATTENTION_LONG(288, 64, 16);  // grid.y = 18
+        break;                             // 272 < seq_len <= 288
       case 19:
-        WMMA_ATTENTION_LONG(304, 64, 16);
-        break;  // 288 < seq_len <= 304
+        WMMA_ATTENTION_LONG(304, 64, 16);  // grid.y = 19
+        break;                             // 288 < seq_len <= 304
       case 20:
-        WMMA_ATTENTION_LONG(320, 64, 16);
-        break;  // 304 < seq_len <= 320
+        WMMA_ATTENTION_LONG(320, 64, 16);  // grid.y = 20
+        break;                             // 304 < seq_len <= 320
       case 21:
-        WMMA_ATTENTION_LONG(336, 64, 16);
-        break;  // 320 < seq_len <= 336
+        WMMA_ATTENTION_LONG(336, 64, 16);  // grid.y = 21
+        break;                             // 320 < seq_len <= 336
       case 22:
-        WMMA_ATTENTION_LONG(352, 64, 16);
-        break;  // 336 < seq_len <= 352
+        WMMA_ATTENTION_LONG(352, 64, 16);  // grid.y = 22
+        break;                             // 336 < seq_len <= 352
     }
   }
 }

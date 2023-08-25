@@ -31,7 +31,8 @@ __global__ void add_QKV_bias<float>(const float *QKV, const float *bias_QKV, flo
   int id = threadIdx.x % half_size_per_head;
   int src_id = (blockIdx.y * gridDim.x + blockIdx.x) * (blockDim.x * 3) + threadIdx.x;
   int trt_id = ((head_id * batch_size + batch_id) * seq_len + seq_id) * half_size_per_head + id;
-
+  // 从BxSx3H的矩阵 变换成 head_num x B x S x size_per_head
+  // bias矩阵的维度是1x3H
   float2 q_value = ((float2 *)QKV)[src_id], q_bias = __ldg(&((float2 *)bias_QKV)[threadIdx.x]);
   float2 k_value = ((float2 *)QKV)[src_id + blockDim.x],
          k_bias = __ldg(&((float2 *)bias_QKV)[threadIdx.x + blockDim.x]);

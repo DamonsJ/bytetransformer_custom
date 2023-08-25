@@ -185,7 +185,9 @@ __global__
   const int batch_seq_offset = blockIdx.y * seq_len;
   const int from_size = max_seq_len / 16;
   const int to_size = max_seq_len / 16;
-
+  // 抛的线程是(max_seq_len / 16) * max((max_seq_len / 16), (size_per_head / 16))
+  // 但是QK乘完之后的矩阵是SxS,所以 to_size是max_seq_len / 16
+  // 也就是按照结果的行列排布的
   // loading Query & Key
   half2 q_bias = __ldg(&qkv_bias[thread_offset]);
   half2 k_bias = __ldg(&qkv_bias[thread_offset + half_hidden_dim]);
@@ -196,19 +198,30 @@ __global__
     *(__half2 *)(*s_kv + offset) = __hadd2(__ldg(&qkv[pos + half_hidden_dim]), k_bias);
   }
   __syncthreads();
-
+  // 结果矩阵是SxS的，且分成16*16的块
+  // 这个地方实际抛的线程数是比from_size * to_size要大的
+  // 实际抛的是(max_seq_len / 16) * max((max_seq_len / 16), (size_per_head / 16))
+  // size_per_head 是定死的64
   if (warpId < from_size * to_size) {
     wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> Q_mat;
     wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> K_mat;
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, half> QK_mat;
     wmma::fill_fragment(QK_mat, 0.0f);
+    // 把warp分成矩阵的形式
+    // (0,0) (0,1), ...., (0, to_size)
+    // (1,0) (1,1), ...., (1, to_size)
+    // 。。。
+    // (from_size,0) (from_size,1), ...., (from_size, to_size)
     const int warp_from_offset = (warpId / to_size) << 4;
     const int warp_to_offset = (warpId % to_size) << 4;
 
 #pragma unroll
+    // 这个4的意思是 size_per_head / 16 ,size_per_head 是定死的64 所以是4
     for (int k = 0; k < 4; k++) {
+      // 这个地方把一个Sxsize_per_head的矩阵分成了16*16的矩阵块， 然后WMMA计算一个16*16的矩阵块
+      // 需要注意的是K是列主序，所以K的转置矩阵不需要内存上的变化
       wmma::load_matrix_sync(Q_mat, s_query[warp_from_offset] + k * WMMA_K,
-                             size_per_head + SKEW_HALF);
+                             size_per_head + SKEW_HALF);  // size_per_head + SKEW_HALF这个是stride
       wmma::load_matrix_sync(K_mat, s_kv[warp_to_offset] + k * WMMA_K, size_per_head + SKEW_HALF);
       wmma::mma_sync(QK_mat, Q_mat, K_mat, QK_mat);
     }
@@ -260,21 +273,28 @@ __global__
   }
 
   // K dim clear 0
+  // 这个地方是为了把seq_len和max_seq_len之间的数据清0
+  // 因为输入的是max_seq_len 的长度，可能比seq_len要大
   for (int seq_id = seq_len + warpId; seq_id < max_seq_len; seq_id += warpNums)
     ((float *)(s_kv[seq_id]))[warp_tid] = 0.0f;
   __syncthreads();
 
   //* V
+  // 这个地方应该是 from_size * (size_per_head / 16) size_per_head是64
+  // 因为这个地方的矩阵乘法是SxS 和 Sxsize_per_head 相乘
+  // 结果是Sxsize_per_head size_per_head是64 所以是from_size*4
   if (warpId < (from_size << 2)) {
     wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> Logits_mat;
     wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> V_mat;
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, half> QKV_mat;
     wmma::fill_fragment(QKV_mat, 0.0f);
+    // 这个地方除4也是一样的道理： (size_per_head / 16) size_per_head是64
     const int warp_from_offset = (warpId >> 2) << 4;
     const int warp_to_offset = (warpId & 0x3) * WMMA_K;
 
 #pragma unroll
     for (int k = 0; k < to_size; k++) {
+      // 这个地方循环的是行 也就是 SxS中的一行，和 Sxsize_per_head的一列相乘
       wmma::load_matrix_sync(Logits_mat, s_logits[warp_from_offset] + k * WMMA_K,
                              max_seq_len + SKEW_HALF);
       wmma::load_matrix_sync(V_mat, s_kv[k * WMMA_K] + warp_to_offset, size_per_head + SKEW_HALF);
